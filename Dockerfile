@@ -1,16 +1,17 @@
-FROM golang:1.13 as bd
-RUN adduser --disabled-login appuser
+FROM golang:1.15 as build-env
 WORKDIR /github.com/layer5io/meshery-linkerd
-ADD . .
-RUN GOPROXY=direct GOSUMDB=off go build -ldflags="-w -s" -a -o /meshery-linkerd .
-RUN find . -name "*.go" -type f -delete; mv linkerd /
+COPY go.mod go.sum ./
+RUN go mod download
 
-FROM alpine
-RUN apk --update add ca-certificates
-RUN mkdir /lib64 && ln -s /lib/libc.musl-x86_64.so.1 /lib64/ld-linux-x86-64.so.2
-COPY --from=bd /meshery-linkerd /app/
-COPY --from=bd /linkerd /app/linkerd
-COPY --from=bd /etc/passwd /etc/passwd
-USER appuser
-WORKDIR /app
-CMD ./meshery-linkerd
+COPY main.go main.go
+COPY internal/ internal/
+COPY linkerd/ linkerd/
+
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -ldflags="-w -s" -a -o meshery-linkerd main.go
+
+FROM gcr.io/distroless/base:nonroot-amd64
+ENV DISTRO="debian"
+ENV GOARCH="amd64"
+WORKDIR /$HOME/.meshery
+COPY --from=build-env /github.com/layer5io/meshery-linkerd/meshery-linkerd .
+ENTRYPOINT ["./meshery-linkerd"]
